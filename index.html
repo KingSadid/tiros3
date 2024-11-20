@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Juego de Dardos en VR - Disparar al Punto Rojo con Cannon.js</title>
+    <!-- A-Frame -->
+    <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
+    <!-- Cannon.js Physics -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/aframe-physics-system@4.0.1/dist/aframe-physics-system.min.js"></script>
+</head>
+
+<body>
+    <a-scene physics="debug: false" background="color: #87CEEB">
+
+        <!-- Luces -->
+        <a-light type="ambient" color="#666666"></a-light>
+        <a-light type="point" intensity="1.5" position="0 5 -3" color="#ffffff"></a-light>
+
+        <!-- Piso -->
+        <a-plane position="0 0 0" rotation="-90 0 0" width="700" height="700"
+            material="src: url(Tierra.jpg); repeat: 10 10" static-body></a-plane>
+
+        <!-- Primera Pared -->
+        <a-plane id="pared1" position="-5.5 3 -5.5" rotation="0 0 0" width="11" height="6"
+            material="src: url(Ladrillos.jpg)" static-body></a-plane>
+
+        <!-- Segunda Pared Rotada -->
+        <a-plane id="pared2" position="5.0 3 -4" rotation="0 -15 0" width="11" height="6"
+            material="src: url(Ladrillos.jpg)" static-body></a-plane>
+
+        <!-- Punto Rojo (Objetivo) -->
+        <a-circle id="objetivo" radius="0.25" position="-5.5 3 -5.49" rotation="0 0 0" material="color: #ff0000"
+            class="clickable" geometry="primitive: circle; radius: 0.25" static-body></a-circle>
+
+        <!-- Interfaz de usuario (Puntaje y Tiempo) como cartel en la pared 2 -->
+        <a-entity id="interfaz-usuario" position="5.0 3 -3.99" rotation="0 -15 0">
+            <!-- Fondo del cartel -->
+            <a-plane width="6" height="3" material="color: #ffffff; opacity: 0.8"></a-plane>
+            <!-- Texto de Puntaje -->
+            <a-text id="puntaje" value="Puntaje: 0" position="0 0.5 0.01" color="#000000" align="center" width="5"
+                height="1"></a-text>
+            <!-- Texto de Tiempo -->
+            <a-text id="tiempo" value="Tiempo: 60" position="0 -0.5 0.01" color="#000000" align="center" width="5"
+                height="1"></a-text>
+        </a-entity>
+
+        <!-- Jugador (Cámara y Controlador) -->
+        <a-entity id="jugador" position="0 1.6 7">
+            <a-camera id="camera" wasd-controls look-controls rotation="0 180 0">
+                <!-- PNG manos -->
+                <a-image id="hands" src="ManosShooter.png" position="0 0 -0.5" scale="1 1 1"></a-image>
+            </a-camera>
+
+            <!-- Controlador VR derecho -->
+            <a-entity laser-controls="hand: right" lanzar-dardo></a-entity>
+        </a-entity>
+    </a-scene>
+
+    <!-- Scripts JavaScript -->
+    <script>
+        var juego;
+
+
+        class Juego {
+            constructor() {
+                juego = this;
+                this.jugador = new Jugador('Jugador1');
+                this.interfazUsuario = new InterfazUsuario();
+                this.sesionJuego = new SesionJuego();
+                this.objetivo = document.querySelector('#objetivo');
+                this.pared = document.querySelector('#pared1');
+
+
+                this.interfazUsuario.mostrarTiempo(this.sesionJuego.tiempoRestante);
+            }
+
+            iniciarJuego() {
+                this.sesionJuego.iniciarSesion();
+            }
+
+            reiniciarJuego() {
+
+                this.jugador.puntajeTotal = 0;
+                this.interfazUsuario.mostrarPuntaje(this.jugador.puntajeTotal);
+
+                this.sesionJuego.tiempoRestante = 60;
+                this.interfazUsuario.mostrarTiempo(this.sesionJuego.tiempoRestante);
+
+                this.moverObjetivoAleatoriamente();
+
+                clearInterval(this.sesionJuego.intervaloTiempo);
+                this.sesionJuego.iniciarSesion();
+            }
+
+            moverObjetivoAleatoriamente() {
+
+                const pared = this.pared;
+                const anchoPared = parseFloat(pared.getAttribute('width'));
+                const altoPared = parseFloat(pared.getAttribute('height'));
+
+
+                const xMin = -anchoPared / 2 + 0.25;
+                const xMax = anchoPared / 2 - 0.25;
+                const yMin = -altoPared / 2 + 0.25;
+                const yMax = altoPared / 2 - 0.25;
+                const xAleatorio = Math.random() * (xMax - xMin) + xMin;
+                const yAleatorio = Math.random() * (yMax - yMin) + yMin;
+
+
+                const posicionLocal = new THREE.Vector3(xAleatorio, yAleatorio, 0);
+
+
+                posicionLocal.applyEuler(pared.object3D.rotation);
+
+
+                const posicionGlobal = posicionLocal.add(pared.object3D.position);
+
+
+                this.objetivo.setAttribute('position', `${posicionGlobal.x} ${posicionGlobal.y} ${posicionGlobal.z + 0.01}`);
+                this.objetivo.setAttribute('visible', true);
+            }
+        }
+
+
+        class Jugador {
+            constructor(nombre) {
+                this.nombre = nombre;
+                this.puntajeTotal = 0;
+            }
+
+            actualizarPuntaje(puntos) {
+                this.puntajeTotal += puntos;
+                juego.interfazUsuario.mostrarPuntaje(this.puntajeTotal);
+            }
+        }
+
+
+        AFRAME.registerComponent('lanzar-dardo', {
+            init: function () {
+                const el = this.el;
+
+                // Usamos 'press' para detectar el botón en VR
+                el.addEventListener('press', () => {
+                    this.lanzarDardoDesdeControlador();
+                });
+
+                // Mantenemos 'triggerdown' por compatibilidad
+                el.addEventListener('triggerdown', () => {
+                    this.lanzarDardoDesdeControlador();
+                });
+            },
+
+            lanzarDardoDesdeControlador: function () {
+
+                let position = new THREE.Vector3();
+                this.el.object3D.getWorldPosition(position);
+
+                // Obtenemos la dirección hacia el objetivo
+                let direction = calcularDireccionHaciaObjetivo(position);
+
+                lanzarDardo(position, direction);
+            }
+        });
+
+
+        function lanzarDardo(position, direction) {
+            const sceneEl = document.querySelector('a-scene');
+
+            let velocidad = 10; // Velocidad inicial del dardo
+
+            let dardo = document.createElement('a-entity');
+            dardo.setAttribute('geometry', { primitive: 'sphere', radius: 0.02 });
+            dardo.setAttribute('material', { color: '#000000' });
+            dardo.setAttribute('velocity', {
+                x: direction.x * velocidad,
+                y: direction.y * velocidad,
+                z: direction.z * velocidad
+            });
+
+            dardo.object3D.position.copy(position);
+
+            dardo.setAttribute('dynamic-body', {
+                mass: 0.1,
+                shape: 'sphere',
+                linearDamping: 0,
+                angularDamping: 0
+            });
+
+            dardo.setAttribute('detectar-impacto', '');
+
+            sceneEl.appendChild(dardo);
+
+            // Aseguramos que el cuerpo físico esté listo antes de establecer la velocidad
+            dardo.addEventListener('body-loaded', function () {
+                if (dardo.body) {
+                    dardo.body.velocity.set(
+                        direction.x * velocidad,
+                        direction.y * velocidad,
+                        direction.z * velocidad
+                    );
+                }
+            });
+
+            setTimeout(() => {
+                if (dardo.parentNode) {
+                    dardo.parentNode.removeChild(dardo);
+                }
+            }, 5000);
+        }
+
+        // Función para calcular la dirección hacia el objetivo
+        function calcularDireccionHaciaObjetivo(origen) {
+            const objetivoEl = document.querySelector('#objetivo');
+            let objetivoPos = new THREE.Vector3();
+            objetivoEl.object3D.getWorldPosition(objetivoPos);
+
+            let direction = new THREE.Vector3();
+            direction.subVectors(objetivoPos, origen).normalize();
+
+            return direction;
+        }
+
+        // Reemplazamos 'click' para usuarios de escritorio
+        document.addEventListener('click', function (event) {
+            if (event.button === 0) {
+                // Lanza el dardo
+                const cameraEl = document.querySelector('#camera');
+                let position = new THREE.Vector3();
+                cameraEl.object3D.getWorldPosition(position);
+
+                // Obtenemos la dirección hacia el objetivo
+                let direction = calcularDireccionHaciaObjetivo(position);
+
+                lanzarDardo(position, direction);
+            } else if (event.button === 2) {
+                // Reinicia el juego
+                event.preventDefault();
+                juego.reiniciarJuego();
+            }
+        });
+
+
+        AFRAME.registerComponent('detectar-impacto', {
+            init: function () {
+                this.el.addEventListener('collide', (e) => {
+                    if (e.detail.body.el.id === 'objetivo') {
+
+                        juego.jugador.actualizarPuntaje(1);
+
+                        // Mover el objetivo inmediatamente a una nueva posición
+                        juego.moverObjetivoAleatoriamente();
+                    }
+
+                    if (this.el.parentNode) {
+                        this.el.parentNode.removeChild(this.el);
+                    }
+                });
+            }
+        });
+
+
+        class InterfazUsuario {
+            constructor() {
+                this.puntajeEl = document.querySelector('#puntaje');
+                this.tiempoEl = document.querySelector('#tiempo');
+            }
+
+            mostrarPuntaje(puntaje) {
+                this.puntajeEl.setAttribute('value', 'Puntaje: ' + puntaje);
+            }
+
+            mostrarTiempo(tiempo) {
+                this.tiempoEl.setAttribute('value', 'Tiempo: ' + tiempo);
+            }
+        }
+
+        class SesionJuego {
+            constructor() {
+                this.tiempoRestante = 60;
+                this.nivelActual = 1;
+                this.intervaloTiempo = null;
+                this.enPausa = false;
+            }
+
+            iniciarSesion() {
+                this.intervaloTiempo = setInterval(() => {
+                    if (!this.enPausa) {
+                        this.tiempoRestante--;
+                        juego.interfazUsuario.mostrarTiempo(this.tiempoRestante);
+
+                        if (this.tiempoRestante <= 0) {
+                            this.finalizarSesion();
+                        }
+                    }
+                }, 1000);
+            }
+
+            pausarSesion() {
+                this.enPausa = !this.enPausa;
+            }
+
+            finalizarSesion() {
+                clearInterval(this.intervaloTiempo);
+
+            }
+        }
+
+        juego = new Juego();
+        juego.iniciarJuego();
+    </script>
+</body>
+
+</html>
